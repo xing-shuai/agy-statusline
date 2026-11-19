@@ -10,15 +10,15 @@ const PRESET_LANGUAGE = 'us';
 const PRESET_FOOTER = {
   labelStyle: 'unicode',
   contextFormat: 'tokens',
+  separator: ' ',
+  singleLine: true,
   items: [
     'model-name',
     'agent-state',
     'mode',
-    'quota',
-    'quota-weekly',
+    'quota-pair',
     'quota-argon',
-    'quota-claude',
-    'quota-claude-weekly',
+    'quota-claude-pair',
     'context-used',
   ],
 };

@@ -221,6 +221,8 @@ export const UNICODE_ICON_MAP = {
   'quota-argon-reset-time': '◶',
   'quota-claude': '◇',
   'quota-claude-weekly': '◈',
+  'quota-pair': '◷',
+  'quota-claude-pair': '◇',
   'context-used': '▤',
   'context-used-bar': '▤',
   'context-used+bar': '▤',
@@ -1803,6 +1805,8 @@ export function buildI18nDict(lang, m, labelStyle = 'text', itemStyles = undefin
       'quota-argon+bar': `${WHITE}Argon 可用:${RESET} ${argonColor}${BOLD}${argonVal}${RESET} ${argonBar}`,
       'quota-claude': `${WHITE}Claude 五小時:${RESET} ${claudeColor}${BOLD}${claudeVal}${RESET}`,
       'quota-claude-weekly': `${WHITE}Claude 七日內:${RESET} ${claudeWeeklyColor}${BOLD}${claudeWeeklyVal}${RESET}`,
+      'quota-pair': `${WHITE}五小時/七日:${RESET} ${m.quotaColor}${BOLD}${m.quotaVal}${RESET}/${m.weeklyQuotaColor}${BOLD}${m.weeklyQuotaVal}${RESET}`,
+      'quota-claude-pair': `${WHITE}Claude 五小時/七日:${RESET} ${claudeColor}${BOLD}${claudeVal}${RESET}/${claudeWeeklyColor}${BOLD}${claudeWeeklyVal}${RESET}`,
       'context-used-bar': `${WHITE}脈絡用量:${RESET} ${m.contextBarVal}`,
       'token-count-bar': `${WHITE}權杖數:${RESET} ${m.tokenBarVal}`,
       'quota+bar': `${WHITE}五小時可用:${RESET} ${m.quotaColor}${BOLD}${m.quotaVal}${RESET} ${m.quotaBarVal}`,
@@ -1848,6 +1852,8 @@ export function buildI18nDict(lang, m, labelStyle = 'text', itemStyles = undefin
       'quota-argon+bar': `${WHITE}Argon 可用:${RESET} ${argonColor}${BOLD}${argonVal}${RESET} ${argonBar}`,
       'quota-claude': `${WHITE}Claude 五小时:${RESET} ${claudeColor}${BOLD}${claudeVal}${RESET}`,
       'quota-claude-weekly': `${WHITE}Claude 七日内:${RESET} ${claudeWeeklyColor}${BOLD}${claudeWeeklyVal}${RESET}`,
+      'quota-pair': `${WHITE}五小时/七日:${RESET} ${m.quotaColor}${BOLD}${m.quotaVal}${RESET}/${m.weeklyQuotaColor}${BOLD}${m.weeklyQuotaVal}${RESET}`,
+      'quota-claude-pair': `${WHITE}Claude 五小时/七日:${RESET} ${claudeColor}${BOLD}${claudeVal}${RESET}/${claudeWeeklyColor}${BOLD}${claudeWeeklyVal}${RESET}`,
       'context-used-bar': `${WHITE}上下文用量:${RESET} ${m.contextBarVal}`,
       'token-count-bar': `${WHITE}令牌数:${RESET} ${m.tokenBarVal}`,
       'quota+bar': `${WHITE}五小时可用:${RESET} ${m.quotaColor}${BOLD}${m.quotaVal}${RESET} ${m.quotaBarVal}`,
@@ -1893,6 +1899,8 @@ export function buildI18nDict(lang, m, labelStyle = 'text', itemStyles = undefin
       'quota-argon+bar': `${WHITE}Argon Available:${RESET} ${argonColor}${BOLD}${argonVal}${RESET} ${argonBar}`,
       'quota-claude': `${WHITE}Claude 5-hr:${RESET} ${claudeColor}${BOLD}${claudeVal}${RESET}`,
       'quota-claude-weekly': `${WHITE}Claude 7-day:${RESET} ${claudeWeeklyColor}${BOLD}${claudeWeeklyVal}${RESET}`,
+      'quota-pair': `${WHITE}5h/7d:${RESET} ${m.quotaColor}${BOLD}${m.quotaVal}${RESET}/${m.weeklyQuotaColor}${BOLD}${m.weeklyQuotaVal}${RESET}`,
+      'quota-claude-pair': `${WHITE}Claude 5h/7d:${RESET} ${claudeColor}${BOLD}${claudeVal}${RESET}/${claudeWeeklyColor}${BOLD}${claudeWeeklyVal}${RESET}`,
       'context-used-bar': `${WHITE}Context Used:${RESET} ${m.contextBarVal}`,
       'token-count-bar': `${WHITE}Tokens:${RESET} ${m.tokenBarVal}`,
       'quota+bar': `${WHITE}5-hr Available:${RESET} ${m.quotaColor}${BOLD}${m.quotaVal}${RESET} ${m.quotaBarVal}`,
@@ -1938,6 +1946,8 @@ export function buildI18nDict(lang, m, labelStyle = 'text', itemStyles = undefin
       'quota-argon+bar': `${WHITE}Argon 残量:${RESET} ${argonColor}${BOLD}${argonVal}${RESET} ${argonBar}`,
       'quota-claude': `${WHITE}Claude 5時間:${RESET} ${claudeColor}${BOLD}${claudeVal}${RESET}`,
       'quota-claude-weekly': `${WHITE}Claude 7日間:${RESET} ${claudeWeeklyColor}${BOLD}${claudeWeeklyVal}${RESET}`,
+      'quota-pair': `${WHITE}5時間/7日:${RESET} ${m.quotaColor}${BOLD}${m.quotaVal}${RESET}/${m.weeklyQuotaColor}${BOLD}${m.weeklyQuotaVal}${RESET}`,
+      'quota-claude-pair': `${WHITE}Claude 5時間/7日:${RESET} ${claudeColor}${BOLD}${claudeVal}${RESET}/${claudeWeeklyColor}${BOLD}${claudeWeeklyVal}${RESET}`,
       'context-used-bar': `${WHITE}コンテキスト使用:${RESET} ${m.contextBarVal}`,
       'token-count-bar': `${WHITE}トークン:${RESET} ${m.tokenBarVal}`,
       'quota+bar': `${WHITE}五時間残量:${RESET} ${m.quotaColor}${BOLD}${m.quotaVal}${RESET} ${m.quotaBarVal}`,
@@ -2080,10 +2090,15 @@ export function preprocessAdjacentItems(items, itemStyles = undefined, defaultSt
   return result;
 }
 
-export function renderStatusLine(footerItems, activeDict, termWidth, fallbackModel, itemStyles = undefined, defaultStyle = 'text') {
+export function renderStatusLine(footerItems, activeDict, termWidth, fallbackModel, itemStyles = undefined, defaultStyle = 'text', options = {}) {
   const lines = [];
   let currentLine = '';
   const processedItems = preprocessAdjacentItems(footerItems || [], itemStyles, defaultStyle);
+  const singleLine = Boolean(options?.singleLine);
+  const rawSeparator = typeof options?.separator === 'string' ? options.separator : null;
+  const separatorStr = rawSeparator === null
+    ? ` ${GRAY}│${RESET} `
+    : (rawSeparator.trim() === '' ? rawSeparator : `${GRAY}${rawSeparator}${RESET}`);
   
   for (let i = 0; i < processedItems.length; i++) {
     const item = processedItems[i];
@@ -2100,15 +2115,15 @@ export function renderStatusLine(footerItems, activeDict, termWidth, fallbackMod
     const text = activeDict ? activeDict[item] : '';
     if (!text) continue;
 
-    const toAdd = currentLine === '' ? text : ` ${GRAY}│${RESET} ${text}`;
+    const toAdd = currentLine === '' ? text : `${separatorStr}${text}`;
     const toAddPlain = stripAnsi(toAdd);
     const currentPlain = stripAnsi(currentLine);
     
-    if (currentLine !== '' && getDisplayWidth(currentPlain) + getDisplayWidth(toAddPlain) > termWidth) {
+    if (!singleLine && currentLine !== '' && getDisplayWidth(currentPlain) + getDisplayWidth(toAddPlain) > termWidth) {
       lines.push(currentLine);
       currentLine = text;
     } else {
-      currentLine += (currentLine === '' ? text : ` ${GRAY}│${RESET} ${text}`);
+      currentLine += toAdd;
     }
   }
   if (currentLine !== '') lines.push(currentLine);
@@ -2335,11 +2350,13 @@ async function main() {
     const contextFormat = settings?.ui?.footer?.contextFormat || settings?.ui?.contextFormat || 'percent';
     const labelStyle = normalizeLabelStyle(settings?.ui?.footer?.labelStyle || settings?.ui?.footer?.style || settings?.ui?.labelStyle || 'text');
     const rawItemStyles = settings?.ui?.footer?.itemStyles;
+    const singleLine = Boolean(settings?.ui?.footer?.singleLine);
+    const separator = typeof settings?.ui?.footer?.separator === 'string' ? settings.ui.footer.separator : undefined;
 
     // 格式化指標並繪製
     const metrics = await extractMetricsAsync(meta, lang, fallbackModel, cache, cachedAccount, quotaInfo, contextInfo, weeklyInfo, { timeFormat, barLength, contextFormat, argonInfo, claudeInfo, claudeWeeklyInfo, footerItems: footerItemsSet });
     const activeDict = buildI18nDict(lang, metrics, labelStyle, rawItemStyles);
-    renderStatusLine(footerItems, activeDict, termWidth, fallbackModel, rawItemStyles, labelStyle);
+    renderStatusLine(footerItems, activeDict, termWidth, fallbackModel, rawItemStyles, labelStyle, { singleLine, separator });
 
   } catch (err) {
     try {
