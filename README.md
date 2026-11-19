@@ -23,7 +23,7 @@ Custom single-line Antigravity CLI (`agy`) statusline with monochrome Unicode ic
 Requires Node.js (`>= 18`):
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/xing-shuai/agy-statusline.git
 cd agy-statusline
 node install.mjs
 ```
