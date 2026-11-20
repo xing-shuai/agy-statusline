@@ -2804,6 +2804,116 @@ writeFileSync(p, JSON.stringify(next, null, 2), 'utf8');
     testsPassed = false;
   }
 
+  // =========================================================================
+  // Test R35: Active session (working / tool_use) refreshes quota at 3s TTL and on active state transitions
+  // =========================================================================
+  try {
+    console.log("\n[Test R35] Verifying active-session 3s quota refresh and active state transition trigger...");
+    const settingsR35 = {
+      ui: {
+        language: "zh-tw",
+        footer: {
+          items: ["quota"]
+        }
+      }
+    };
+    const cacheR35 = {
+      updatedAt: Date.now() - 3500,
+      lsUpdatedAt: Date.now() - 3500,
+      lastPollAttemptAt: Date.now() - 3500,
+      lastAgentState: "working",
+      lastOutputTokens: 200,
+      lastTotalTokens: 1500,
+      shortTerm: {
+        gemini: { remaining_percentage: 88, refreshes_in: "4h 0m" }
+      }
+    };
+    const homeR35 = makeTempHome(cacheR35, settingsR35);
+    try {
+      const hooksDirR35 = join(homeR35, '.gemini', 'antigravity-cli', 'hooks');
+      mkdirSync(hooksDirR35, { recursive: true });
+      writeFileSync(join(hooksDirR35, 'fetch-local-quota.mjs'), `
+import { readFileSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import os from 'os';
+const p = join(os.homedir(), '.gemini', 'tmp', 'real_quota_cache.json');
+const prev = JSON.parse(readFileSync(p, 'utf8'));
+const now = Date.now();
+const nextPct = prev.shortTerm?.gemini?.remaining_percentage === 74 ? 68 : 74;
+writeFileSync(p, JSON.stringify({
+  ...prev,
+  updatedAt: now,
+  lsUpdatedAt: now,
+  shortTerm: { gemini: { remaining_percentage: nextPct, refreshes_in: '3h 55m' } }
+}, null, 2), 'utf8');
+`, 'utf8');
+
+      // Case 1: Same active state ('working' -> 'working') after 3.5s (>= 3000ms, < 15000ms) with unchanged tokens
+      const metaWorking = {
+        model: { display_name: "Gemini 4 Argon (Medium)" },
+        agent_state: "working",
+        context_window: { total_input_tokens: 1300, total_output_tokens: 200, context_window_size: 1048576 },
+        quota: { "gemini-5h": { remaining_fraction: 0.88, reset_in_seconds: 14400 } },
+        terminal_width: 120
+      };
+      const resWorking = await runStatusline(metaWorking, homeR35);
+      const plainWorking = stripAnsi(resWorking.stdout).trim();
+      assert.strictEqual(resWorking.code, 0);
+      assert.ok(plainWorking.includes("五小時可用: 74%"), `Active working session at 3.5s age must refresh to 74%, got: "${plainWorking}"`);
+
+      // Case 2: Active state transition ('working' -> 'tool_use') after 2.0s (>= 1500ms, < 3000ms)
+      const cachePathR35 = join(homeR35, '.gemini', 'tmp', 'real_quota_cache.json');
+      const midCache = JSON.parse(readFileSync(cachePathR35, 'utf8'));
+      midCache.updatedAt = Date.now() - 2000;
+      midCache.lsUpdatedAt = Date.now() - 2000;
+      midCache.lastPollAttemptAt = Date.now() - 2000;
+      writeFileSync(cachePathR35, JSON.stringify(midCache, null, 2), 'utf8');
+
+      const metaToolUse = { ...metaWorking, agent_state: "tool_use" };
+      const resToolUse = await runStatusline(metaToolUse, homeR35);
+      const plainToolUse = stripAnsi(resToolUse.stdout).trim();
+      assert.strictEqual(resToolUse.code, 0);
+      assert.ok(plainToolUse.includes("五小時可用: 68%"), `Active state transition (working -> tool_use) at 2.0s age must refresh to 68%, got: "${plainToolUse}"`);
+
+      console.log("✅ Test R35 passed! (Active-session 3s quota refresh and active state transition verified)");
+    } finally {
+      try { rmSync(homeR35, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch (_) {}
+    }
+  } catch (err) {
+    console.error("Test R35 execution failed:", err);
+    testsPassed = false;
+  }
+
+  // =========================================================================
+  // Test R36: Orchestrator / Neon / Argon / Hydrogen map to gemini pool (not stale models fallback)
+  // =========================================================================
+  try {
+    console.log("\n[Test R36] Verifying Orchestrator (Neon) / Argon / Hydrogen map to gemini quota pool...");
+    const { resolveModelQuota: r36Short, resolveWeeklyQuota: r36Weekly } = await import('./statusline-quota.mjs');
+    const cacheR36 = {
+      shortTerm: {
+        gemini: { remaining_percentage: 55, refreshes_in: "2h 10m" },
+        "3p": { remaining_percentage: 100, refreshes_in: "4h 50m" }
+      },
+      weekly: {
+        gemini: { remaining_percentage: 52, refreshes_in: "4d 1h" },
+        "3p": { remaining_percentage: 100, refreshes_in: "6d" }
+      },
+      models: {
+        somelegacy: { remaining_percentage: 74, refreshes_in: "3h" }
+      }
+    };
+    assert.strictEqual(r36Short("Orchestrator (Neon)", cacheR36).remaining_percentage, 55);
+    assert.strictEqual(r36Weekly("Orchestrator (Neon)", cacheR36).remaining_percentage, 52);
+    assert.strictEqual(r36Short("Orchestrator (Argon)", cacheR36).remaining_percentage, 55);
+    assert.strictEqual(r36Short("Hydrogen (Medium)", cacheR36).remaining_percentage, 55);
+    assert.strictEqual(r36Short("Orchestrator (Claude)", cacheR36).remaining_percentage, 100);
+    console.log("✅ Test R36 passed! (Orchestrator / Neon / Argon / Hydrogen map to gemini quota pool)");
+  } catch (err) {
+    console.error("Test R36 execution failed:", err);
+    testsPassed = false;
+  }
+
   if (testsPassed) {
     console.log("\n🎉 All rendering tests passed successfully!");
     process.exit(0);

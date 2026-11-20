@@ -712,6 +712,9 @@ async function main() {
       if (hasCacheData) {
         const cacheFilePath = join(tmpDir, 'real_quota_cache.json');
         const prev = readJsonSafeSync(cacheFilePath);
+        const prevEmail = typeof prev?.email === 'string' ? prev.email.trim().toLowerCase() : '';
+        const newEmail = typeof cache?.email === 'string' ? cache.email.trim().toLowerCase() : '';
+        const accountChanged = Boolean(prevEmail && newEmail && prevEmail !== newEmail);
         if (prev) {
           if (prev.lastAgentState !== undefined) cache.lastAgentState = prev.lastAgentState;
           if (prev.lastOutputTokens !== undefined) cache.lastOutputTokens = prev.lastOutputTokens;
@@ -719,16 +722,21 @@ async function main() {
           if (prev.lastPollAttemptAt !== undefined) cache.lastPollAttemptAt = prev.lastPollAttemptAt;
           if (prev.lastModelKey !== undefined) cache.lastModelKey = prev.lastModelKey;
           if (prev.lastModelLimitAttemptAt !== undefined) cache.lastModelLimitAttemptAt = prev.lastModelLimitAttemptAt;
-          cache.shortTerm = mergeQuotaBuckets(prev.shortTerm, cache.shortTerm, true);
-          cache.weekly = mergeQuotaBuckets(prev.weekly, cache.weekly, true);
-          cache.models = { ...(prev.models || {}), ...(cache.models || {}) };
-          cache.modelLimits = { ...(prev.modelLimits || {}), ...(cache.modelLimits || {}) };
-          if (!cache.modelLimitsUpdatedAt && prev.modelLimitsUpdatedAt) {
-            cache.modelLimitsUpdatedAt = prev.modelLimitsUpdatedAt;
+          if (prev.lastLsSig !== undefined) cache.lastLsSig = prev.lastLsSig;
+          if (prev.oauthTokenMtimeMs !== undefined) cache.oauthTokenMtimeMs = prev.oauthTokenMtimeMs;
+
+          if (!accountChanged) {
+            cache.shortTerm = mergeQuotaBuckets(prev.shortTerm, cache.shortTerm, true);
+            cache.weekly = mergeQuotaBuckets(prev.weekly, cache.weekly, true);
+            cache.models = { ...(prev.models || {}), ...(cache.models || {}) };
+            cache.modelLimits = { ...(prev.modelLimits || {}), ...(cache.modelLimits || {}) };
+            if (!cache.modelLimitsUpdatedAt && prev.modelLimitsUpdatedAt) {
+              cache.modelLimitsUpdatedAt = prev.modelLimitsUpdatedAt;
+            }
+            if (!cache.email && prev.email) cache.email = prev.email;
+            if (!cache.planTier && prev.planTier) cache.planTier = prev.planTier;
+            if (!cache.planStatus && prev.planStatus) cache.planStatus = prev.planStatus;
           }
-          if (!cache.email && prev.email) cache.email = prev.email;
-          if (!cache.planTier && prev.planTier) cache.planTier = prev.planTier;
-          if (!cache.planStatus && prev.planStatus) cache.planStatus = prev.planStatus;
         }
         mkdirSync(dirname(cacheFilePath), { recursive: true });
         writeFileSyncAndVerifyNoBOM(cacheFilePath, JSON.stringify(cache, null, 2));
