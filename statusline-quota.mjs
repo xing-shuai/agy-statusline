@@ -1,5 +1,6 @@
 import { promises as fs, realpathSync } from 'fs';
 import { spawn, exec, execFile } from 'child_process';
+import { createHash } from 'crypto';
 import { promisify } from 'util';
 import path, { join, basename, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -769,9 +770,12 @@ export async function triggerQuotaUpdateIfNeededAsync(cacheInfo, meta = {}, opti
     (currentOutputTokens > 0 && currentOutputTokens !== prevOutputTokens) ||
     (currentTotalTokens > 0 && currentTotalTokens !== prevTotalTokens);
   const missingBuckets = Boolean(options?.missingRequiredBuckets);
+  const forceRefresh = Boolean(options?.forceRefresh);
 
   let needUpdate = false;
-  if (!cacheInfo || !lastUpdatedAt || ageMs >= 15000) {
+  if (forceRefresh) {
+    needUpdate = true;
+  } else if (!cacheInfo || !lastUpdatedAt || ageMs >= 15000) {
     if (!cacheInfo?.lastPollAttemptAt || attemptAgeMs >= 15000) {
       needUpdate = true;
     }
@@ -833,17 +837,23 @@ export async function triggerQuotaUpdateIfNeededAsync(cacheInfo, meta = {}, opti
         const freshCache = JSON.parse(freshContent.replace(/^\uFEFF/, ''));
         if (freshCache && typeof freshCache === 'object' && !Array.isArray(freshCache)) {
           const freshTs = freshCache.lsUpdatedAt || freshCache.updatedAt || 0;
-          if (freshTs > lastUpdatedAt || (lastUpdatedAt === 0 && freshTs > 0)) {
+          const minFreshTs = Math.max(lastUpdatedAt, Number(options?.minFreshTs || 0));
+          if (freshTs > minFreshTs || (minFreshTs === 0 && freshTs > 0)) {
             freshlyFetchedFromLs = true;
+            const oldEmail = typeof cacheInfo?.email === 'string' ? cacheInfo.email.trim().toLowerCase() : '';
+            const newEmail = typeof freshCache?.email === 'string' ? freshCache.email.trim().toLowerCase() : '';
+            const accountChanged = Boolean(oldEmail && newEmail && oldEmail !== newEmail);
             if (cacheInfo && typeof cacheInfo === 'object') {
-              freshCache.shortTerm = mergeQuotaBuckets(cacheInfo.shortTerm, freshCache.shortTerm, true);
-              freshCache.weekly = mergeQuotaBuckets(cacheInfo.weekly, freshCache.weekly, true);
-              freshCache.models = { ...(cacheInfo.models || {}), ...(freshCache.models || {}) };
-              if (cacheInfo.modelLimits || freshCache.modelLimits) {
-                freshCache.modelLimits = { ...(cacheInfo.modelLimits || {}), ...(freshCache.modelLimits || {}) };
-              }
-              if (!freshCache.modelLimitsUpdatedAt && cacheInfo.modelLimitsUpdatedAt) {
-                freshCache.modelLimitsUpdatedAt = cacheInfo.modelLimitsUpdatedAt;
+              if (!accountChanged) {
+                freshCache.shortTerm = mergeQuotaBuckets(cacheInfo.shortTerm, freshCache.shortTerm, true);
+                freshCache.weekly = mergeQuotaBuckets(cacheInfo.weekly, freshCache.weekly, true);
+                freshCache.models = { ...(cacheInfo.models || {}), ...(freshCache.models || {}) };
+                if (cacheInfo.modelLimits || freshCache.modelLimits) {
+                  freshCache.modelLimits = { ...(cacheInfo.modelLimits || {}), ...(freshCache.modelLimits || {}) };
+                }
+                if (!freshCache.modelLimitsUpdatedAt && cacheInfo.modelLimitsUpdatedAt) {
+                  freshCache.modelLimitsUpdatedAt = cacheInfo.modelLimitsUpdatedAt;
+                }
               }
               if (cacheInfo.lastPollAttemptAt !== undefined) freshCache.lastPollAttemptAt = cacheInfo.lastPollAttemptAt;
               if (cacheInfo.lastModelKey !== undefined) freshCache.lastModelKey = cacheInfo.lastModelKey;
@@ -1378,19 +1388,48 @@ async function readEmailFromCliLogAsync() {
     }
   } catch (_) {}
 
+  const authEmailRegex = /(?:applyAuthResult:\s*email=|authenticated successfully as\s+)([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g;
+  const extractLastMatch = (text) => {
+    let last = '';
+    for (const m of text.matchAll(authEmailRegex)) {
+      if (m[1]) last = m[1];
+    }
+    return last;
+  };
+
   for (const logPath of candidates) {
     let fh;
     try {
       fh = await fs.open(logPath, 'r');
-      const buf = Buffer.alloc(65536);
-      const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+      const st = await fh.stat();
+      const chunkLen = Math.min(65536, st.size);
+      if (chunkLen > 0) {
+        const tailOffset = Math.max(0, st.size - chunkLen);
+        const buf = Buffer.alloc(chunkLen);
+        const { bytesRead } = await fh.read(buf, 0, chunkLen, tailOffset);
+        if (bytesRead > 0) {
+          const foundTail = extractLastMatch(buf.subarray(0, bytesRead).toString('utf8'));
+          if (foundTail) {
+            await fh.close();
+            fh = null;
+            return foundTail;
+          }
+        }
+        if (tailOffset > 0) {
+          const headBuf = Buffer.alloc(chunkLen);
+          const { bytesRead: headRead } = await fh.read(headBuf, 0, chunkLen, 0);
+          if (headRead > 0) {
+            const foundHead = extractLastMatch(headBuf.subarray(0, headRead).toString('utf8'));
+            if (foundHead) {
+              await fh.close();
+              fh = null;
+              return foundHead;
+            }
+          }
+        }
+      }
       await fh.close();
       fh = null;
-      if (bytesRead > 0) {
-        const text = buf.subarray(0, bytesRead).toString('utf8');
-        const m = text.match(/(?:applyAuthResult:\s*email=|authenticated successfully as\s+)([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
-        if (m && m[1]) return m[1];
-      }
     } catch (_) {
       if (fh) {
         try { await fh.close(); } catch (_) {}
@@ -2206,6 +2245,55 @@ async function main() {
       } catch (e) {}
     }
 
+    const lsAddr = process.env.ANTIGRAVITY_LS_ADDRESS || '';
+    const lsCsrf = process.env.ANTIGRAVITY_CSRF_TOKEN || '';
+    const lsSig = (lsAddr || lsCsrf)
+      ? createHash('sha256').update(`${lsAddr}|${lsCsrf}`).digest('hex').slice(0, 16)
+      : '';
+    let oauthTokenMtimeMs = 0;
+    if (needsQuotaOrAccount) {
+      try {
+        const oauthStat = await fs.stat(join(os.homedir(), '.gemini', 'antigravity-cli', 'antigravity-oauth-token'));
+        oauthTokenMtimeMs = Math.floor(oauthStat.mtimeMs);
+      } catch (_) {}
+    }
+
+    let forceQuotaRefresh = false;
+    const preResetCacheTs = cache?.lsUpdatedAt || cache?.updatedAt || 0;
+    const rawMetaEmail = meta?.email || meta?.account?.email || '';
+    const cacheEmailNorm = typeof cache?.email === 'string' ? cache.email.trim().toLowerCase() : '';
+    let detectedEmailRaw = typeof rawMetaEmail === 'string' ? rawMetaEmail.trim() : '';
+    if (!detectedEmailRaw && needsQuotaOrAccount && oauthTokenMtimeMs > 0 && cacheEmailNorm && (!cache.oauthTokenMtimeMs || cache.oauthTokenMtimeMs !== oauthTokenMtimeMs)) {
+      detectedEmailRaw = await readEmailFromCliLogAsync();
+    }
+    const detectedEmailNorm = detectedEmailRaw.toLowerCase();
+    const accountSwitched = Boolean(detectedEmailNorm && cacheEmailNorm && detectedEmailNorm !== cacheEmailNorm);
+    if (accountSwitched) {
+      cache = {
+        email: detectedEmailRaw,
+        shortTerm: {},
+        weekly: {},
+        models: {},
+        modelLimits: {},
+        lsUpdatedAt: 0,
+        updatedAt: 0,
+        lastPollAttemptAt: 0,
+      };
+      if (cachedAccount && typeof cachedAccount === 'object') {
+        cachedAccount = {
+          ...cachedAccount,
+          email: detectedEmailRaw,
+          planTier: meta?.plan_tier || meta?.account?.plan_tier || '',
+        };
+      }
+      forceQuotaRefresh = true;
+    } else if (
+      (lsSig && cache?.lastLsSig && lsSig !== cache.lastLsSig) ||
+      (oauthTokenMtimeMs > 0 && cache?.oauthTokenMtimeMs && oauthTokenMtimeMs !== cache.oauthTokenMtimeMs)
+    ) {
+      forceQuotaRefresh = true;
+    }
+
     const normFallbackModel = normalizeModelName(fallbackModel);
     const activePool = normFallbackModel.includes('gemini') ? 'gemini' : ((normFallbackModel.includes('claude') || normFallbackModel.includes('gpt')) ? '3p' : '');
     const needsArgon = Array.isArray(footerItems) && footerItems.some(item => typeof item === 'string' && item.startsWith('quota-argon'));
@@ -2280,17 +2368,22 @@ async function main() {
     let timedOut = false;
     let shouldPersistCache = false;
 
-    const shouldUpdateForQuota = needsQuotaOrAccount && (!isMetaQuotaComplete || stateOrTokensChanged || isCacheStale);
+    const shouldUpdateForQuota = needsQuotaOrAccount && (forceQuotaRefresh || !isMetaQuotaComplete || stateOrTokensChanged || isCacheStale);
     const shouldUpdateForContext = needsContext && (missingModelLimits || stateOrTokensChanged || isCacheStale);
     if (needsCache && (shouldUpdateForQuota || shouldUpdateForContext)) {
       const updateRes = await triggerQuotaUpdateIfNeededAsync(cache, meta, {
         cachePath,
         missingRequiredBuckets: (needsQuotaOrAccount && missingRequiredBuckets) || missingModelLimits,
+        forceRefresh: forceQuotaRefresh,
+        minFreshTs: accountSwitched ? preResetCacheTs : 0,
         conversationId
       });
       cache = updateRes.cache;
       freshlyFetchedFromLs = updateRes.freshlyFetchedFromLs;
       timedOut = updateRes.timedOut;
+      if (accountSwitched) {
+        shouldPersistCache = true;
+      }
     }
     if (needsQuotaOrAccount && metaQuota) {
       if (!cache || typeof cache !== 'object') cache = {};
@@ -2325,6 +2418,14 @@ async function main() {
       }
       if (missingModelLimits && !freshlyFetchedFromLs) {
         cache.lastModelLimitAttemptAt = now;
+        shouldPersistCache = true;
+      }
+      if (lsSig && cache.lastLsSig !== lsSig) {
+        cache.lastLsSig = lsSig;
+        shouldPersistCache = true;
+      }
+      if (oauthTokenMtimeMs > 0 && cache.oauthTokenMtimeMs !== oauthTokenMtimeMs) {
+        cache.oauthTokenMtimeMs = oauthTokenMtimeMs;
         shouldPersistCache = true;
       }
       if (shouldPersistCache && !timedOut) {
