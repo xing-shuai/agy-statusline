@@ -2303,9 +2303,9 @@ async function main() {
       forceQuotaRefresh = true;
     }
 
-    const activePool = resolveQuotaPool(fallbackModel);
     const needsArgon = Array.isArray(footerItems) && footerItems.some(item => typeof item === 'string' && item.startsWith('quota-argon'));
     const needsClaude = Array.isArray(footerItems) && footerItems.some(item => typeof item === 'string' && item.startsWith('quota-claude'));
+    const activePool = needsClaude ? 'gemini' : resolveQuotaPool(fallbackModel);
 
     const metaQuota = parseMetaQuota(meta);
     const hasMetaShortTerm = activePool
@@ -2447,9 +2447,10 @@ async function main() {
       }
     }
 
-    // 解析核心資料
-    const quotaInfo = resolveModelQuota(fallbackModel, cache);
-    const weeklyInfo = resolveWeeklyQuota(fallbackModel, cache);
+    // 解析核心資料（若已配置獨立的 quota-claude* 指標，主 quota/quota-pair 固定顯示 Gemini 池）
+    const primaryQuotaModel = needsClaude ? 'Gemini' : fallbackModel;
+    const quotaInfo = resolveModelQuota(primaryQuotaModel, cache);
+    const weeklyInfo = resolveWeeklyQuota(primaryQuotaModel, cache);
     const argonInfo = resolveArgonQuota(cache);
     const claudeInfo = resolveClaudeQuota(cache);
     const claudeWeeklyInfo = resolveClaudeWeeklyQuota(cache);

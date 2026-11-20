@@ -2914,6 +2914,55 @@ writeFileSync(p, JSON.stringify({
     testsPassed = false;
   }
 
+  // =========================================================================
+  // Test R37: When quota-claude* is configured, quota-pair stays on Gemini pool even on Claude models
+  // =========================================================================
+  try {
+    console.log("\n[Test R37] Verifying quota-pair stays on Gemini pool when quota-claude-pair is configured...");
+    const settingsR37 = {
+      ui: {
+        language: "zh-tw",
+        footer: {
+          labelStyle: "unicode",
+          items: ["model-name", "quota-pair", "quota-argon", "quota-claude-pair"]
+        }
+      }
+    };
+    const cacheR37 = {
+      updatedAt: Date.now(),
+      lsUpdatedAt: Date.now(),
+      shortTerm: {
+        gemini: { remaining_percentage: 55, refreshes_in: "2h 10m" },
+        "3p": { remaining_percentage: 89, refreshes_in: "4h 50m" }
+      },
+      weekly: {
+        gemini: { remaining_percentage: 52, refreshes_in: "4d 1h" },
+        "gemini-argon-wtu": { remaining_percentage: 90, refreshes_in: "5d" },
+        "3p": { remaining_percentage: 94, refreshes_in: "6d" }
+      }
+    };
+    const homeR37 = makeTempHome(cacheR37, settingsR37);
+    try {
+      const metaR37 = {
+        model: { display_name: "Claude Sonnet 5.5 (Medium)" },
+        agent_state: "idle",
+        terminal_width: 160
+      };
+      const resR37 = await runStatusline(metaR37, homeR37);
+      const plainR37 = stripAnsi(resR37.stdout).trim();
+      assert.strictEqual(resR37.code, 0);
+      assert.ok(plainR37.includes("◷ 55%/52%"), `Primary quota-pair must stay on Gemini (55%/52%), got: "${plainR37}"`);
+      assert.ok(plainR37.includes("✧ 90%"), `Argon quota must be 90%, got: "${plainR37}"`);
+      assert.ok(plainR37.includes("◇ 89%/94%"), `Claude quota-claude-pair must show 89%/94%, got: "${plainR37}"`);
+      console.log("✅ Test R37 passed! (quota-pair stays on Gemini while quota-claude-pair shows Claude)");
+    } finally {
+      try { rmSync(homeR37, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch (_) {}
+    }
+  } catch (err) {
+    console.error("Test R37 execution failed:", err);
+    testsPassed = false;
+  }
+
   if (testsPassed) {
     console.log("\n🎉 All rendering tests passed successfully!");
     process.exit(0);
